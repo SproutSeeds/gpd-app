@@ -1,3 +1,4 @@
+import { SubscriptionSession } from "../../src/subscription/session"
 import { NodeFileSystem } from "@effect/platform-node"
 import { FetchHttpClient } from "effect/unstable/http"
 import { expect } from "bun:test"
@@ -212,6 +213,7 @@ function makeHttp() {
       Layer.provide(Instruction.defaultLayer),
       Layer.provide(SystemPrompt.defaultLayer),
       Layer.provide(SessionGoal.defaultLayer),
+      Layer.provide(SubscriptionSession.defaultLayer),
       Layer.provideMerge(deps),
     ),
   ).pipe(Layer.provide(summary))

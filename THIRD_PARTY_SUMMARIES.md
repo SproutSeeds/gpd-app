@@ -1,6 +1,6 @@
 # Third-party license summary
 
-Regenerated 2026-04-21 from `bun.lock` + `packages/desktop/src-tauri/Cargo.lock`.
+Regenerated 2026-10-03 from `bun.lock` + `packages/desktop/src-tauri/Cargo.lock`.
 Do not hand-edit — run `scripts/licenses/regen.sh` and commit the diff.
 
 Deduplicated roll-up of every license string that appears on a dependency
@@ -9,22 +9,22 @@ shipped inside the GPD Desktop binary. Compound SPDX expressions like
 consumer picks from. Per-package detail + full license texts live in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
-**Totals:** 828 npm packages · 680 Rust crates · 43 distinct license strings · 1508 total package entries.
+**Totals:** 825 npm packages · 683 Rust crates · 43 distinct license strings · 1508 total package entries.
 
 ## Licenses in use
 
 | License | npm | Rust | Total |
 |---|---:|---:|---:|
-| `MIT` | 561 | 178 | 739 |
-| `Apache-2.0 OR MIT` | 1 | 392 | 393 |
-| `Apache-2.0` | 135 | 5 | 140 |
-| `ISC` | 74 | 3 | 77 |
-| `Apache-2.0 OR MIT OR Zlib` |  | 28 | 28 |
-| `BSD-3-Clause` | 20 | 5 | 25 |
+| `MIT` | 555 | 178 | 733 |
+| `Apache-2.0 OR MIT` | 1 | 394 | 395 |
+| `Apache-2.0` | 136 | 5 | 141 |
+| `ISC` | 72 | 3 | 75 |
+| `Apache-2.0 OR MIT OR Zlib` |  | 29 | 29 |
+| `BSD-3-Clause` | 21 | 5 | 26 |
 | `Unicode-3.0` |  | 18 | 18 |
 | `MIT OR Apache-2.0` | 12 |  | 12 |
-| `BlueOak-1.0.0` | 8 |  | 8 |
-| `BSD-2-Clause` | 6 | 2 | 8 |
+| `BlueOak-1.0.0` | 10 |  | 10 |
+| `BSD-2-Clause` | 7 | 2 | 9 |
 | `MPL-2.0` |  | 8 | 8 |
 | `MIT OR Unlicense` |  | 7 | 7 |
 | `Apache-2.0 OR Apache-2.0 WITH LLVM-exception OR MIT` |  | 5 | 5 |
@@ -55,7 +55,7 @@ consumer picks from. Per-package detail + full license texts live in
 | `CDLA-Permissive-2.0` |  | 1 | 1 |
 | `MIT (Bun) + LGPL-2.0 (statically-linked JavaScriptCore/WebKit)` | 1 |  | 1 |
 | `MIT (inferred from LICENSE file)` | 1 |  | 1 |
-| `Python-2.0` | 1 |  | 1 |
+| `SEE LICENSE IN README.md` | 1 |  | 1 |
 | `UNKNOWN` |  | 1 | 1 |
 | `Zlib` |  | 1 | 1 |
 

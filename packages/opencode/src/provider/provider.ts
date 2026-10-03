@@ -59,6 +59,8 @@ import { GoogleAuth } from "google-auth-library"
 import { ProviderTransform } from "./transform"
 import { Installation } from "../installation"
 import { ModelID, ProviderID } from "./schema"
+import { subscriptionOnly, isRuntime } from "../subscription/types"
+import { subscriptionProviders } from "../subscription/models"
 
 export namespace Provider {
   const log = Log.create({ service: "provider" })
@@ -319,7 +321,12 @@ export namespace Provider {
     const tools = Array.isArray(body.tools) ? body.tools : []
     const toolSizes: Array<{ name: string; bytes: number }> = tools
       .map((tool: any) => ({
-        name: typeof tool?.name === "string" ? tool.name : typeof tool?.function?.name === "string" ? tool.function.name : "",
+        name:
+          typeof tool?.name === "string"
+            ? tool.name
+            : typeof tool?.function?.name === "string"
+              ? tool.function.name
+              : "",
         bytes: jsonBytes(tool),
       }))
       .sort((a: { name: string; bytes: number }, b: { name: string; bytes: number }) => b.bytes - a.bytes)
@@ -1365,6 +1372,14 @@ export namespace Provider {
         Effect.gen(function* () {
           using _ = log.time("state")
           const cfg = yield* config.get()
+          if (subscriptionOnly())
+            return {
+              models: new Map<string, LanguageModelV3>(),
+              providers: yield* Effect.promise(subscriptionProviders),
+              sdk: new Map<string, BundledSDK>(),
+              modelLoaders: {},
+              varsLoaders: {},
+            }
           const modelsDev = yield* Effect.promise(() => ModelsDev.get())
           const database = mapValues(modelsDev, fromModelsDevProvider)
 
@@ -1440,12 +1455,9 @@ export namespace Provider {
             let models: ConfigModels = provider.models ?? ({} as ConfigModels)
             if (providerID === "gpd") {
               const storedAuth = yield* auth.get(ProviderID.make("gpd")).pipe(Effect.orDie)
-              const apiKey =
-                storedAuth && storedAuth.type === "api" ? storedAuth.key : undefined
+              const apiKey = storedAuth && storedAuth.type === "api" ? storedAuth.key : undefined
               const baseURL = provider.api
-              const dynamic = yield* Effect.promise(() =>
-                resolveGpdProviderModels(baseURL, apiKey),
-              )
+              const dynamic = yield* Effect.promise(() => resolveGpdProviderModels(baseURL, apiKey))
               // Fold the dynamic metadata into any per-model overrides
               // the user wrote into config so local tweaks still win.
               const merged: Record<string, any> = {}
@@ -1718,7 +1730,9 @@ export namespace Provider {
         }),
       )
 
-      const list = Effect.fn("Provider.list")(() => InstanceState.use(state, (s) => s.providers))
+      const list = Effect.fn("Provider.list")(() =>
+        subscriptionOnly() ? Effect.promise(subscriptionProviders) : InstanceState.use(state, (s) => s.providers),
+      )
 
       async function resolveSDK(model: Model, s: State, envs: Record<string, string | undefined>) {
         try {
@@ -2074,14 +2088,14 @@ export namespace Provider {
       }
 
       const getProvider = Effect.fn("Provider.getProvider")((providerID: ProviderID) =>
-        InstanceState.use(state, (s) => s.providers[providerID]),
+        Effect.map(list(), (providers) => providers[providerID]),
       )
 
       const getModel = Effect.fn("Provider.getModel")(function* (providerID: ProviderID, modelID: ModelID) {
-        const s = yield* InstanceState.get(state)
-        const provider = s.providers[providerID]
+        const providers = yield* list()
+        const provider = providers[providerID]
         if (!provider) {
-          const available = Object.keys(s.providers)
+          const available = Object.keys(providers)
           const matches = fuzzysort.go(providerID, available, { limit: 3, threshold: -10000 })
           throw new ModelNotFoundError({ providerID, modelID, suggestions: matches.map((m) => m.target) })
         }
@@ -2096,6 +2110,8 @@ export namespace Provider {
       })
 
       const getLanguage = Effect.fn("Provider.getLanguage")(function* (model: Model) {
+        if (subscriptionOnly() || isRuntime(model.providerID))
+          throw new Error("Subscription research must use the local runtime. API fallback is disabled.")
         const s = yield* InstanceState.get(state)
         const envs = yield* env.all()
         const key = `${model.providerID}/${model.id}`
@@ -2197,6 +2213,15 @@ export namespace Provider {
       })
 
       const defaultModel = Effect.fn("Provider.defaultModel")(function* () {
+        if (subscriptionOnly()) {
+          const providers = yield* list()
+          const provider = Object.values(providers)[0]
+          const model =
+            provider &&
+            (Object.values(provider.models).find((m) => m.options.default) ?? Object.values(provider.models)[0])
+          if (!model) throw new Error("Connect Codex or Claude Code in Settings to start research.")
+          return { providerID: model.providerID, modelID: model.id }
+        }
         const cfg = yield* config.get()
         if (cfg.model) return parseModel(cfg.model)
 

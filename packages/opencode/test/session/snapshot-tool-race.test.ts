@@ -1,3 +1,4 @@
+import { SubscriptionSession } from "../../src/subscription/session"
 /**
  * Reproducer for snapshot race condition with instant tool execution.
  *
@@ -166,6 +167,7 @@ function makeHttp() {
       Layer.provide(Instruction.defaultLayer),
       Layer.provide(SystemPrompt.defaultLayer),
       Layer.provide(SessionGoal.defaultLayer),
+      Layer.provide(SubscriptionSession.defaultLayer),
       Layer.provideMerge(deps),
     ),
   )

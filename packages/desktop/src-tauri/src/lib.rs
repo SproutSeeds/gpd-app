@@ -950,7 +950,7 @@ async fn initialize(app: AppHandle) {
             ("OPENCODE_CONFIG_CONTENT".to_string(), gpd_setup::build_config_json()),
             ("PATH".to_string(), augmented_path_for_env.clone()),
             // GPD uses a fully self-contained provider definition via OPENCODE_CONFIG_CONTENT
-            // with enabled_providers: ["gpd"], so the models.dev network fetch is wasted work.
+            // with runtime supplied model catalogs, so models.dev is unnecessary.
             // Skipping it eliminates several seconds of startup latency on cold cache.
             ("OPENCODE_DISABLE_MODELS_FETCH".to_string(), "1".to_string()),
             // GPD: session sharing is hidden in the UI and no-op'd at the runtime layer
@@ -960,12 +960,10 @@ async fn initialize(app: AppHandle) {
             // programmatic invocations (SDK calls, slash commands, deep links)
             // all no-op cleanly.
             ("OPENCODE_DISABLE_SHARE".to_string(), "1".to_string()),
-            // GPD session logging. Activates the GpdLogger bus-subscriber
-            // which POSTs gzipped NDJSON flushes to LiteLLM's /gpd/log route.
-            // Auth flows through the user's existing virtual key in auth.json;
-            // we never ship a GCS service-account key on the desktop.
-            // The proxy on Railway forwards writes to gs://gpd-desktop-logs.
-            ("OPENCODE_GPD_LOGS_ENABLED".to_string(), "1".to_string()),
+            // Subscription research stays between the user and the official
+            // runtimes. PSI gateway logging is disabled, including spill replay.
+            ("OPENCODE_GPD_LOGS_ENABLED".to_string(), "0".to_string()),
+            ("GPD_SUBSCRIPTION_ONLY".to_string(), "1".to_string()),
         ]
     };
 

@@ -65,6 +65,7 @@ import { DebugBar } from "@/components/debug-bar"
 import { Titlebar } from "@/components/titlebar"
 import { useServer } from "@/context/server"
 import { useLanguage, type Locale } from "@/context/language"
+import { useSubscription } from "@/context/subscription"
 import {
   displayName,
   effectiveWorkspaceOrder,
@@ -128,6 +129,7 @@ export default function Layout(props: ParentProps) {
   const command = useCommand()
   const theme = useTheme()
   const language = useLanguage()
+  const subscription = useSubscription()
   const initialDirectory = decode64(params.dir)
   const route = createMemo(() => {
     const slug = params.dir
@@ -1118,7 +1120,7 @@ export default function Layout(props: ParentProps) {
         // where the user can review the change/revoke flows before
         // committing.
         id: "settings.openApiKey",
-        title: language.t("settings.account.accessKey.title"),
+        title: subscription.state.enabled ? "AI connections" : language.t("settings.account.accessKey.title"),
         category: language.t("command.category.settings"),
         onSelect: () => openSettings("api-key"),
       },
@@ -1159,17 +1161,12 @@ export default function Layout(props: ParentProps) {
             }
           } else {
             const timeout = <T,>(p: Promise<T>) =>
-              Promise.race([
-                p,
-                new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 3000)),
-              ])
+              Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 3000))])
             await timeout(globalSDK.client.auth.remove({ providerID: "gpd" })).catch((e) =>
               console.error("[gpd] auth.remove failed:", e),
             )
           }
-          void globalSDK.client.global.dispose().catch((e) =>
-            console.error("[gpd] global.dispose failed:", e),
-          )
+          void globalSDK.client.global.dispose().catch((e) => console.error("[gpd] global.dispose failed:", e))
           localStorage.removeItem("gpd.key.saved")
           // Sentinel read by app.tsx on the next mount: pre-latches
           // reonboardLatched so the provider-connected effect cannot
@@ -1666,13 +1663,7 @@ export default function Layout(props: ParentProps) {
       void import("@/components/dialog-select-directory").then((x) => {
         if (dialogRun !== run) return
         dialog.show(
-          () => (
-            <x.DialogSelectDirectory
-              title={language.t("home.newProject")}
-              multiple={false}
-              onSelect={resolve}
-            />
-          ),
+          () => <x.DialogSelectDirectory title={language.t("home.newProject")} multiple={false} onSelect={resolve} />,
           () => resolve(null),
         )
       })
@@ -2576,14 +2567,12 @@ export default function Layout(props: ParentProps) {
       settingsLabel={() => language.t("sidebar.settings")}
       settingsKeybind={() => command.keybind("settings.open")}
       onOpenSettings={() => openSettings()}
-      apiKeyLabel={() => language.t("sidebar.apiKey")}
+      apiKeyLabel={() => (subscription.state.enabled ? "AI connections" : language.t("sidebar.apiKey"))}
       onOpenApiKey={() => openSettings("api-key")}
       feedbackLabel={() => language.t("sidebar.feedback")}
       onOpenFeedback={() => openSettings("feedback")}
       railToggleLabel={() =>
-        layout.projectRail.opened()
-          ? language.t("sidebar.rail.collapse")
-          : language.t("sidebar.rail.expand")
+        layout.projectRail.opened() ? language.t("sidebar.rail.collapse") : language.t("sidebar.rail.expand")
       }
       railToggleKeybind={() => command.keybind("projectRail.toggle")}
       onToggleRail={() => layout.projectRail.toggle()}
@@ -2703,7 +2692,6 @@ export default function Layout(props: ParentProps) {
                 </Show>
               </main>
             </div>
-
           </div>
         </div>
         {import.meta.env.DEV && localStorage.getItem("gpd.debugBar") === "1" && <DebugBar />}

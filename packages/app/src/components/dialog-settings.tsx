@@ -1,4 +1,4 @@
-import { Component } from "solid-js"
+import { Component, Show } from "solid-js"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { Tabs } from "@opencode-ai/ui/tabs"
 import { Icon } from "@opencode-ai/ui/icon"
@@ -15,15 +15,24 @@ import { SettingsApiKey } from "./settings-api-key"
 import { SettingsModels } from "./settings-models"
 import { SettingsProfile } from "./settings-profile"
 import { SettingsStats } from "./settings-stats"
+import { useSubscription } from "@/context/subscription"
+import { SubscriptionConnections } from "./subscription-connections"
 
 export const DialogSettings: Component<{ defaultTab?: string }> = (props) => {
   const language = useLanguage()
   const platform = usePlatform()
   const dialog = useDialog()
+  const subscription = useSubscription()
 
   return (
     <Dialog size="x-large" transition>
-      <Tabs orientation="vertical" variant="settings" defaultValue={props.defaultTab ?? "general"} class="h-full settings-dialog" style={{ position: "relative" }}>
+      <Tabs
+        orientation="vertical"
+        variant="settings"
+        defaultValue={props.defaultTab ?? "general"}
+        class="h-full settings-dialog"
+        style={{ position: "relative" }}
+      >
         <IconButton
           icon="close"
           variant="ghost"
@@ -55,7 +64,7 @@ export const DialogSettings: Component<{ defaultTab?: string }> = (props) => {
                   <div class="flex flex-col gap-1.5 w-full">
                     <Tabs.Trigger value="api-key">
                       <Icon name="providers" />
-                      {language.t("settings.account.accessKey.title")}
+                      {subscription.state.enabled ? "AI connections" : language.t("settings.account.accessKey.title")}
                     </Tabs.Trigger>
                     <Tabs.Trigger value="profile">
                       <Icon name="glasses" />
@@ -65,10 +74,12 @@ export const DialogSettings: Component<{ defaultTab?: string }> = (props) => {
                       <Icon name="models" />
                       {language.t("settings.models.title")}
                     </Tabs.Trigger>
-                    <Tabs.Trigger value="stats">
-                      <Icon name="chart-bar" />
-                      {language.t("settings.stats.title")}
-                    </Tabs.Trigger>
+                    <Show when={!subscription.state.enabled}>
+                      <Tabs.Trigger value="stats">
+                        <Icon name="chart-bar" />
+                        {language.t("settings.stats.title")}
+                      </Tabs.Trigger>
+                    </Show>
                   </div>
                 </div>
 
@@ -116,7 +127,11 @@ export const DialogSettings: Component<{ defaultTab?: string }> = (props) => {
           <SettingsKeybinds />
         </Tabs.Content>
         <Tabs.Content value="api-key" class="no-scrollbar">
-          <SettingsApiKey />
+          <Show when={subscription.state.enabled} fallback={<SettingsApiKey />}>
+            <div class="p-8">
+              <SubscriptionConnections />
+            </div>
+          </Show>
         </Tabs.Content>
         <Tabs.Content value="profile" class="no-scrollbar">
           <SettingsProfile />
@@ -125,13 +140,37 @@ export const DialogSettings: Component<{ defaultTab?: string }> = (props) => {
           <SettingsModels />
         </Tabs.Content>
         <Tabs.Content value="stats" class="no-scrollbar">
-          <SettingsStats />
+          <Show
+            when={!subscription.state.enabled}
+            fallback={
+              <div class="p-8">
+                <SubscriptionConnections />
+              </div>
+            }
+          >
+            <SettingsStats />
+          </Show>
         </Tabs.Content>
         <Tabs.Content value="dependencies" class="no-scrollbar">
           <SettingsDependencies />
         </Tabs.Content>
         <Tabs.Content value="feedback" class="no-scrollbar">
-          <SettingsFeedback />
+          <Show
+            when={!subscription.state.enabled}
+            fallback={
+              <div class="p-8 flex flex-col gap-4">
+                <p>Track feedback and development in this fork.</p>
+                <button
+                  class="cursor-pointer text-left"
+                  onClick={() => platform.openLink("https://github.com/SproutSeeds/gpd-app/issues")}
+                >
+                  Open GitHub issues
+                </button>
+              </div>
+            }
+          >
+            <SettingsFeedback />
+          </Show>
         </Tabs.Content>
         <Tabs.Content value="licenses" class="no-scrollbar">
           <SettingsLicenses />
