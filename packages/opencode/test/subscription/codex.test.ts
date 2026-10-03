@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test"
 import { runCodex } from "../../src/subscription/codex"
 import type { ResearchInput, RuntimeEvent } from "../../src/subscription/types"
+import { createSubscriptionAccess } from "../../src/subscription/access"
+import { tmpdir } from "../fixture/fixture"
 
 function fixture(options: { credits?: boolean; exit?: boolean; wait?: boolean; accountChange?: boolean } = {}) {
   const calls: { method: string; params: any }[] = []
@@ -133,6 +135,38 @@ test("cancel interrupts the owned turn and closes its process", async () => {
   await expect(running).rejects.toThrow("Research stopped")
   expect(f.calls.some((x) => x.method === "turn/interrupt")).toBe(true)
   expect(f.closed()).toBe(true)
+})
+test("disconnect interrupts the GPD turn and blocks a stale model request without logging out", async () => {
+  await using tmp = await tmpdir()
+  const access = createSubscriptionAccess(tmp.path)
+  const f = fixture({ wait: true })
+  const started = Promise.withResolvers<void>()
+  const request = f.rpc.request.bind(f.rpc)
+  f.rpc.request = async (method, params) => {
+    const response = await request(method, params)
+    if (method === "turn/start") started.resolve()
+    return response
+  }
+  const running = runCodex(f.input, async () => f.rpc, access)
+  void running.catch(() => {})
+  await started.promise
+  await access.setEnabled("codex-subscription", false)
+  await expect(running).rejects.toThrow("disconnected from GPD")
+  expect(f.closed()).toBe(true)
+  expect(f.calls.some((x) => x.method === "turn/interrupt")).toBe(true)
+  expect(f.calls.some((x) => /logout|login/.test(x.method))).toBe(false)
+  let opened = false
+  await expect(
+    runCodex(
+      f.input,
+      async () => {
+        opened = true
+        return f.rpc
+      },
+      access,
+    ),
+  ).rejects.toThrow("disconnected from GPD")
+  expect(opened).toBe(false)
 })
 test("process loss reports failure without resending an uncertain turn", async () => {
   const f = fixture({ exit: true })

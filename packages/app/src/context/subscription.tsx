@@ -1,5 +1,5 @@
 import { createSimpleContext } from "@opencode-ai/ui/context"
-import { createStore } from "solid-js/store"
+import { createStore, reconcile } from "solid-js/store"
 import { onCleanup, onMount } from "solid-js"
 import { usePlatform } from "./platform"
 import { useServer } from "./server"
@@ -10,6 +10,7 @@ export type Connection = {
   id: "codex-subscription" | "claude-subscription"
   name: string
   installed: boolean
+  enabled?: boolean
   authenticated: boolean
   plan?: string
   models: { id: string; name: string; efforts: string[] }[]
@@ -31,11 +32,13 @@ export const { use: useSubscription, provider: SubscriptionProvider } = createSi
       connections: [] as Connection[],
       error: "",
       login: undefined as Connection["id"] | undefined,
+      disconnecting: undefined as Connection["id"] | undefined,
       loginState: undefined as Login | undefined,
       entered: localStorage.getItem("gpd.subscription.entered.v1") === "true",
     })
     let timer: ReturnType<typeof setTimeout> | undefined
     let disposed = false
+    let refreshRevision = 0
     const request = async <T,>(path = "", method = "GET"): Promise<T> => {
       const current = server.current?.http
       if (!current) throw new Error("Local GPD server is unavailable.")
@@ -51,22 +54,25 @@ export const { use: useSubscription, provider: SubscriptionProvider } = createSi
       return response.json()
     }
     const refresh = async (fresh = true) => {
-      if (state.loading) return
+      const revision = ++refreshRevision
       setState({ loading: true, error: "" })
       try {
         const mode = await request<{ enabled: boolean }>("/mode")
+        if (disposed || revision !== refreshRevision) return
         setState("enabled", mode.enabled)
         if (!mode.enabled) return
         const value = await request<{ enabled: boolean; connections: Connection[] }>(fresh ? "?refresh=true" : "")
-        setState({ enabled: value.enabled, connections: value.connections })
+        if (disposed || revision !== refreshRevision) return
+        setState("enabled", value.enabled)
+        setState("connections", reconcile(value.connections, { key: "id" }))
         if (value.enabled) {
           const providers = await sdk.client.provider.list()
-          if (providers.data) sync.set("provider", providers.data)
+          if (providers.data && !disposed && revision === refreshRevision) sync.set("provider", providers.data)
         }
       } catch (error) {
-        setState("error", (error as Error).message)
+        if (!disposed && revision === refreshRevision) setState("error", (error as Error).message)
       } finally {
-        setState("loading", false)
+        if (!disposed && revision === refreshRevision) setState("loading", false)
       }
     }
     const cancel = async () => {
@@ -103,6 +109,20 @@ export const { use: useSubscription, provider: SubscriptionProvider } = createSi
         setState("login", undefined)
       }
     }
+    const disconnect = async (id: Connection["id"]) => {
+      if (state.disconnecting) return
+      ++refreshRevision
+      setState({ disconnecting: id, error: "" })
+      try {
+        if (state.login === id) await cancel()
+        await request(`/${id}/disconnect`, "POST")
+        await refresh()
+      } catch (error) {
+        setState("error", (error as Error).message)
+      } finally {
+        setState({ disconnecting: undefined, loading: false })
+      }
+    }
     onMount(() => void refresh(false))
     onCleanup(() => {
       disposed = true
@@ -112,6 +132,7 @@ export const { use: useSubscription, provider: SubscriptionProvider } = createSi
       state,
       refresh,
       connect,
+      disconnect,
       cancel,
       enter() {
         localStorage.setItem("gpd.subscription.entered.v1", "true")

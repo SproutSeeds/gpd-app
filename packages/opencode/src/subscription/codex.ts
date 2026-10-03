@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import os from "node:os"
 import { RuntimeRPC } from "./rpc"
 import { codexReadiness, type Connection, type ResearchInput, type RuntimeModel } from "./types"
+import { subscriptionAccess } from "./access"
 
 export async function openCodex(cwd = os.tmpdir()) {
   const executable = Bun.which("codex")
@@ -91,7 +92,15 @@ export async function codexConnection(): Promise<Connection> {
   }
 }
 
-export async function runCodex(input: ResearchInput, open: (cwd?: string) => Promise<RPC> = openCodex) {
+export function runCodex(
+  input: ResearchInput,
+  open: (cwd?: string) => Promise<RPC> = openCodex,
+  access = subscriptionAccess,
+) {
+  return access.run("codex-subscription", input.signal, (signal) => runConnectedCodex({ ...input, signal }, open))
+}
+
+async function runConnectedCodex(input: ResearchInput, open: (cwd?: string) => Promise<RPC>) {
   const rpc = await open(input.cwd)
   let threadID = ""
   let turnID = ""
@@ -112,10 +121,20 @@ export async function runCodex(input: ResearchInput, open: (cwd?: string) => Pro
   const cancel = () => {
     if (threadID && turnID)
       void rpc.request("turn/interrupt", { threadId: threadID, turnId: turnID }, 3000).catch(() => {})
-    reject?.(new Error("Research stopped."))
+    reject?.(
+      new Error(
+        input.signal.reason?.message?.includes("disconnected from GPD")
+          ? input.signal.reason.message
+          : "Research stopped.",
+      ),
+    )
+    rpc.close()
   }
+  input.signal.addEventListener("abort", cancel, { once: true })
   try {
+    input.signal.throwIfAborted()
     const status = await inspect(rpc)
+    input.signal.throwIfAborted()
     if (!status.usage.ready) throw new Error(status.usage.reason)
     if (!status.models.some((x) => x.id === input.model))
       throw new Error("This model is no longer available. Refresh your connection.")
@@ -247,7 +266,6 @@ export async function runCodex(input: ResearchInput, open: (cwd?: string) => Pro
         else reject?.(new Error(p.turn?.error?.message ?? "Research was interrupted."))
       }
     }
-    input.signal.addEventListener("abort", cancel, { once: true })
     input.signal.throwIfAborted()
     if (input.text.trim() === "/compact") {
       await rpc.request("thread/compact/start", { threadId: threadID })
