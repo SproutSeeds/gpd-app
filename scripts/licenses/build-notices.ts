@@ -63,7 +63,7 @@ async function readFirstFile(dir: string, candidates: string[]): Promise<string>
   for (const n of candidates) {
     try {
       const t = await fs.readFile(path.join(dir, n), "utf8")
-      return t.trim()
+      return t.replace(/\r\n/g, "\n").replace(/[ \t]+$/gm, "").trim()
     } catch {}
   }
   return ""

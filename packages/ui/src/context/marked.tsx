@@ -1,3 +1,4 @@
+import { normalizeMathDelimiters } from "./math-delimiters"
 import { marked } from "marked"
 import markedKatex from "marked-katex-extension"
 import markedShiki from "marked-shiki"
@@ -446,7 +447,6 @@ function renderMathInText(text: string): string {
   return result
 }
 
-
 function renderMathExpressions(html: string): string {
   // Split on code/pre/kbd tags to avoid processing their contents
   const codeBlockPattern = /(<(?:pre|code|kbd)[^>]*>[\s\S]*?<\/(?:pre|code|kbd)>)/gi
@@ -519,6 +519,7 @@ const MATH_PLACEHOLDER_PREFIX = " KATEX_MATH_"
 const MATH_PLACEHOLDER_SUFFIX = "_KATEX "
 
 function preRenderMath(markdown: string): { source: string; replacements: Map<string, string> } {
+  markdown = normalizeMathDelimiters(markdown)
   const replacements = new Map<string, string>()
   if (!markdown.includes("$")) return { source: markdown, replacements }
 

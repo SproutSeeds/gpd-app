@@ -12,6 +12,8 @@ import { errors } from "../error"
 import { lazy } from "../../util/lazy"
 import { Log } from "../../util/log"
 import { Effect } from "effect"
+import { subscriptionOnly } from "../../subscription/types"
+import { subscriptionProviders } from "../../subscription/models"
 
 const log = Log.create({ service: "server" })
 
@@ -41,6 +43,17 @@ export const ProviderRoutes = lazy(() =>
         },
       }),
       async (c) => {
+        if (subscriptionOnly()) {
+          const providers = await subscriptionProviders()
+          return c.json({
+            all: Object.values(providers),
+            default: mapValues(
+              providers,
+              (p) => Object.values(p.models).find((m) => m.options.default)?.id ?? Object.values(p.models)[0].id,
+            ),
+            connected: Object.keys(providers),
+          })
+        }
         const result = await AppRuntime.runPromise(
           Effect.gen(function* () {
             const svc = yield* Provider.Service

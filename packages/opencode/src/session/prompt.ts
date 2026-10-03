@@ -51,6 +51,8 @@ import { EffectLogger } from "@/effect/logger"
 import { InstanceState } from "@/effect/instance-state"
 import { TaskTool, type TaskPromptOps } from "@/tool/task"
 import { SessionRunState } from "./run-state"
+import { SubscriptionSession } from "../subscription/session"
+import { isRuntime, subscriptionOnly } from "../subscription/types"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -133,6 +135,7 @@ export namespace SessionPrompt {
       const summary = yield* SessionSummary.Service
       const sys = yield* SystemPrompt.Service
       const llm = yield* LLM.Service
+      const subscription = yield* SubscriptionSession.Service
       const goalIdleSubscription = yield* InstanceState.make(() =>
         Effect.succeed({
           active: false,
@@ -787,7 +790,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           .trim()
         if (!text) return false
         if (/^\/goal\s+(?!(edit|pause|resume|clear)\b)\S/i.test(text)) return true
-        if (/\b(create|set|start|add|make|establish)\s+(a\s+|an\s+|the\s+|my\s+|this\s+)?(session\s+)?goal\b/i.test(text))
+        if (
+          /\b(create|set|start|add|make|establish)\s+(a\s+|an\s+|the\s+|my\s+|this\s+)?(session\s+)?goal\b/i.test(text)
+        )
           return true
         if (/\b(set|make|change)\s+(the\s+|my\s+)?goal\s+(to|as)\b/i.test(text)) return true
         return false
@@ -967,7 +972,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 // instance root and rejected every path).
                 const sessionInfo = yield* sessions.get(input.session.id).pipe(Effect.option)
                 const root =
-                  Option.isSome(sessionInfo) && sessionInfo.value.directory ? sessionInfo.value.directory : ctx.directory
+                  Option.isSome(sessionInfo) && sessionInfo.value.directory
+                    ? sessionInfo.value.directory
+                    : ctx.directory
                 const failures: string[] = []
                 const verified: { path: string; bytes: number; description: string }[] = []
 
@@ -1009,7 +1016,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   },
                   {
                     rel: "GPD/REQUIREMENTS.md",
-                    remedy: "Scoping contract is missing. Run /gpd-new-project (or /gpd-new-milestone) to approve REQUIREMENTS.md.",
+                    remedy:
+                      "Scoping contract is missing. Run /gpd-new-project (or /gpd-new-milestone) to approve REQUIREMENTS.md.",
                   },
                   {
                     rel: "GPD/ROADMAP.md",
@@ -1071,7 +1079,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 // mentions paper / manuscript / arxiv / publication. These
                 // goals must additionally have a paper source and a refereed
                 // decision artifact before completion.
-                const isPaperGoal = /(paper|manuscript|arxiv|publication|preprint|submission|referee)/i.test(objectiveText)
+                const isPaperGoal = /(paper|manuscript|arxiv|publication|preprint|submission|referee)/i.test(
+                  objectiveText,
+                )
                 if (isPaperGoal) {
                   let paperFound = false
                   const paperEntries = yield* readdirRel("paper")
@@ -1100,7 +1110,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
                 // Reject deliverables whose filename signals a planning-only
                 // artifact. These are workflow inputs, not workflow outputs.
-                const STUB_NAME_RE = /(^|[/_-])(proposal|outline|sketch|draft|plan|notes|todo|scratch|idea|brainstorm)\b/i
+                const STUB_NAME_RE =
+                  /(^|[/_-])(proposal|outline|sketch|draft|plan|notes|todo|scratch|idea|brainstorm)\b/i
 
                 const MIN_BYTES = 2000
                 for (const raw of deliverables) {
@@ -2138,18 +2149,41 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           let step = 0
           const session = yield* sessions.get(sessionID)
 
+          let history = yield* sessions.messages({ sessionID })
+          let latest = history.findLast((m) => m.info.role === "user")
+          if (latest?.info.role === "user" && isRuntime(latest.info.model.providerID)) {
+            yield* status.set(sessionID, { type: "busy" })
+            while (latest?.info.role === "user" && isRuntime(latest.info.model.providerID)) {
+              const existing = history.findLast(
+                (m) => m.info.role === "assistant" && m.info.parentID === latest!.info.id && m.info.time.completed,
+              )
+              if (existing) return existing
+              const user: MessageV2.User = latest.info
+              const agent = yield* agents.get(user.agent)
+              const instructions = [
+                agent?.prompt,
+                user.system,
+                ...(yield* instruction.system().pipe(Effect.orDie)),
+                agent ? yield* sys.skills(agent) : undefined,
+              ]
+                .filter(Boolean)
+                .join("\n\n")
+              const reply = yield* subscription.run({ sessionID, user, messages: history, instructions })
+              history = yield* sessions.messages({ sessionID })
+              latest = history.findLast((m) => m.info.role === "user")
+              if (latest?.info.id === user.id || (reply.info.role === "assistant" && reply.info.error)) return reply
+            }
+          }
+          if (subscriptionOnly())
+            throw new Error("Choose a connected Codex or Claude Code model. API providers are disabled.")
+
           while (true) {
             yield* status.set(sessionID, { type: "busy" })
             yield* slog.info("loop", { step })
 
             let msgs = yield* MessageV2.filterCompactedEffect(sessionID)
 
-            const {
-              user: lastUser,
-              assistant: lastAssistant,
-              finished: lastFinished,
-              tasks,
-            } = MessageV2.latest(msgs)
+            const { user: lastUser, assistant: lastAssistant, finished: lastFinished, tasks } = MessageV2.latest(msgs)
 
             if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
 
@@ -2327,9 +2361,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               }
               const format = lastUser.format ?? { type: "text" as const }
               if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
-              const rootSessionID = session.parentID
-                ? yield* sessions.root(SessionID.make(sessionID))
-                : sessionID
+              const rootSessionID = session.parentID ? yield* sessions.root(SessionID.make(sessionID)) : sessionID
               const result = yield* handle.process({
                 user: lastUser,
                 agent,
@@ -2388,7 +2420,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         "SessionPrompt.loop",
       )(function* (input: z.infer<typeof LoopInput>) {
         yield* ensureGoalIdleSubscription()
-        return yield* state.ensureRunning(input.sessionID, interruptedAssistant(input.sessionID), runLoop(input.sessionID))
+        return yield* state.ensureRunning(
+          input.sessionID,
+          interruptedAssistant(input.sessionID),
+          runLoop(input.sessionID),
+        )
       })
 
       const shell: (input: ShellInput) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.shell")(
@@ -2444,8 +2480,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           // and blow through macOS's 256-FD soft limit at N~200.
           const results = yield* Effect.forEach(
             shellMatches,
-            ([, cmd]) =>
-              Effect.promise(async () => (await Process.text([cmd], { shell: sh, nothrow: true })).text),
+            ([, cmd]) => Effect.promise(async () => (await Process.text([cmd], { shell: sh, nothrow: true })).text),
             { concurrency: PROMPT_RESOLUTION_CONCURRENCY },
           )
           let index = 0
@@ -2454,6 +2489,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         template = template.trim()
 
         const taskModel = yield* Effect.gen(function* () {
+          if (subscriptionOnly() && input.model) return Provider.parseModel(input.model)
           if (cmd.model) return Provider.parseModel(cmd.model)
           if (cmd.agent) {
             const cmdAgent = yield* agents.get(cmd.agent)
@@ -2541,7 +2577,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
   export const defaultLayer = Layer.suspend(() =>
     layer.pipe(
-      Layer.provide(SessionRunState.defaultLayer),
+      Layer.provide(Layer.mergeAll(SessionRunState.defaultLayer, SubscriptionSession.defaultLayer)),
       Layer.provide(SessionStatus.defaultLayer),
       Layer.provide(SessionCompaction.defaultLayer),
       Layer.provide(SessionProcessor.defaultLayer),

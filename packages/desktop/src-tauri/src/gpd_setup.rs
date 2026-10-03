@@ -4,7 +4,7 @@
 //! 1. Provisions Python via bundled `uv` (or finds system Python >= 3.11)
 //! 2. Creates a GPD venv and installs `get-physics-done[arxiv]`
 //! 3. Runs `gpd install opencode --global` to deploy commands, agents, docs
-//! 4. Injects LiteLLM provider config into opencode.json
+//! 4. Configures local subscription runtimes and GPD MCP tools
 //! 5. Writes .gpd-initialized marker
 //!
 //! MCP servers run locally via real Python from the venv.
@@ -31,9 +31,6 @@ const GPD_DEPS_HASH_MARKER: &str = ".gpd-deps-hash";
 /// Bundled Python dependency manifest (Tauri resource path).
 const PYTHON_MANIFEST_RESOURCE: &str = "python-manifest.json";
 
-/// LiteLLM proxy URL
-const LITELLM_URL: &str = "https://litellm-production-46bb.up.railway.app/v1";
-
 /// Pinned PyPI version of the `get-physics-done` package that the GPD
 /// venv is seeded with. Empty string = install the latest version PyPI
 /// resolves at first-run time. Mirrors `install-gpd/install`'s
@@ -57,7 +54,7 @@ const GPD_PACKAGE_VERSION: &str = "";
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Builds the OPENCODE_CONFIG_CONTENT JSON with provider config and
+/// Builds the OPENCODE_CONFIG_CONTENT JSON with subscription selection and
 /// MCP server definitions pointing to the venv Python interpreter.
 pub fn build_config_json() -> String {
     let python = gpd_python();
@@ -78,22 +75,7 @@ pub fn build_config_json() -> String {
         "gpd-arxiv": {{"type":"local","command":["{p}","-m","gpd.mcp.servers.arxiv_bridge"],"enabled":true,"timeout":180000}}
     }}"#);
 
-    let m = r#""modalities":{"input":["text","image","pdf"],"output":["text"]}"#;
-    let mg = r#""modalities":{"input":["text","image","pdf","video","audio"],"output":["text"]}"#;
-    let mt = r#""modalities":{"input":["text"],"output":["text"]}"#;
-    // See comment in inject_provider_config() about why there's no
-    // "env" field on the gpd provider — opencode falls back to
-    // auth.json (populated by the installer) when env is absent.
-    // NOTE: no top-level "model" key here. The default model lives in
-    // $OPENCODE_CONFIG_DIR/opencode.json (written by inject_provider_config
-    // on first install). The env-var tier used to include "model" too,
-    // which overrode the user's saved model on every launch because env
-    // tier wins over the global-file tier. See Decision 0.A
-    // (docs/CONFIG_ARCHITECTURE.md) and Task 3.1.
-    format!(r#"{{"provider":{{"gpd":{{"name":"GPD (PSI)","api":"{url}","models":{{"claude-opus-4-6":{{"name":"Claude Opus 4.6","tool_call":true,"reasoning":true,"attachment":true,"temperature":true,{m},"limit":{{"context":1000000,"output":128000}}}},"claude-sonnet-4-6":{{"name":"Claude Sonnet 4.6","tool_call":true,"reasoning":true,"attachment":true,"temperature":true,{m},"limit":{{"context":1000000,"output":64000}}}},"claude-haiku-4-5":{{"name":"Claude Haiku 4.5","tool_call":true,"reasoning":true,"attachment":true,"temperature":true,{m},"limit":{{"context":200000,"output":64000}}}},"gpt-5.5":{{"name":"GPT 5.5","tool_call":true,"reasoning":true,"attachment":true,"temperature":true,{m},"limit":{{"context":1050000,"output":128000}}}},"gpt-5.4":{{"name":"GPT 5.4","tool_call":true,"reasoning":true,"attachment":true,"temperature":true,{m},"limit":{{"context":1050000,"output":131072}}}},"gpt-5.4-mini":{{"name":"GPT 5.4 mini","tool_call":true,"reasoning":true,"attachment":true,"temperature":true,{m},"limit":{{"context":1050000,"output":131072}}}},"gpt-5.4-nano":{{"name":"GPT 5.4 nano","tool_call":true,"reasoning":true,"attachment":true,"temperature":true,{m},"limit":{{"context":1050000,"output":131072}}}},"gpt-5.3-codex":{{"name":"GPT 5.3 Codex","tool_call":true,"attachment":true,"temperature":true,{m},"limit":{{"context":1000000,"output":32768}}}},"gpt-4.1":{{"name":"GPT 4.1","tool_call":true,"attachment":true,"temperature":true,{m},"limit":{{"context":1000000,"output":32768}}}},"gpt-4.1-mini":{{"name":"GPT 4.1 mini","tool_call":true,"attachment":true,"temperature":true,{m},"limit":{{"context":1000000,"output":32768}}}},"o4-mini":{{"name":"o4-mini (reasoning)","tool_call":true,"reasoning":true,"temperature":true,{mt},"limit":{{"context":200000,"output":100000}}}},"gemini-3.1-pro-preview":{{"name":"Gemini 3.1 Pro","tool_call":true,"reasoning":true,"attachment":true,"temperature":true,{mg},"limit":{{"context":1000000,"output":65536}}}},"gemini-3-flash-preview":{{"name":"Gemini 3 Flash","tool_call":true,"reasoning":true,"attachment":true,"temperature":true,{mg},"limit":{{"context":1000000,"output":65536}}}},"gemini-3.1-flash-lite-preview":{{"name":"Gemini 3.1 Flash-Lite","tool_call":true,"attachment":true,"temperature":true,{m},"limit":{{"context":1000000,"output":65536}}}}}}}}}},"enabled_providers":["gpd"],"mcp":{mcp}}}"#,
-        url = LITELLM_URL,
-        mcp = mcp_servers,
-    )
+    format!(r#"{{"enabled_providers":["codex-subscription","claude-subscription"],"mcp":{mcp}}}"#, mcp = mcp_servers)
 }
 
 /// Returns the GPD home directory (~/.gpd, or $GPD_HOME if set).
@@ -221,7 +203,7 @@ pub async fn run_first_setup(app: AppHandle) -> Result<(), String> {
     // Step 3: Install commands, agents, reference docs
     run_gpd_install(&config).await?;
 
-    // Step 4: Inject LiteLLM provider config
+    // Step 4: Configure local subscription runtimes
     inject_provider_config(&config)?;
 
     // Step 5: Mark as initialized
@@ -661,60 +643,11 @@ fn inject_provider_config(config: &Path) -> Result<(), String> {
     };
 
     if let Some(obj) = config_val.as_object_mut() {
-        // Add provider
-        let provider = obj.entry("provider").or_insert_with(|| serde_json::json!({}));
-        if let Some(provider_obj) = provider.as_object_mut() {
-            // NO "env" field here on purpose — previously we had
-            // "env": ["GPD_API_KEY"] which told opencode to ONLY read
-            // the key from that environment variable. GUI apps on
-            // Windows/macOS don't inherit env from .profile / user
-            // profile, so GPD.exe launched from the Start menu had
-            // an empty GPD_API_KEY and opencode showed "Sign-in
-            // failed. Check your access key in Settings." even though
-            // the installer had correctly written the key to
-            // auth.json. Removing the env field makes opencode fall
-            // back to auth.json (which is what we populate from the
-            // installer on all platforms). Users who prefer setting
-            // the key via env can still do so — opencode honors
-            // OPENCODE_API_KEY / provider-specific env overrides
-            // regardless of whether env is declared here.
-            provider_obj.insert("gpd".to_string(), serde_json::json!({
-                "name": "GPD (PSI)",
-                "api": LITELLM_URL,
-                "models": {
-                    "claude-opus-4-6": { "name": "Claude Opus 4.6", "tool_call": true, "reasoning": true, "attachment": true, "temperature": true, "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] }, "limit": { "context": 1000000, "output": 128000 } },
-                    "claude-sonnet-4-6": { "name": "Claude Sonnet 4.6", "tool_call": true, "reasoning": true, "attachment": true, "temperature": true, "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] }, "limit": { "context": 1000000, "output": 64000 } },
-                    "claude-haiku-4-5": { "name": "Claude Haiku 4.5", "tool_call": true, "reasoning": true, "attachment": true, "temperature": true, "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] }, "limit": { "context": 200000, "output": 64000 } },
-                    "gpt-5.5": { "name": "GPT 5.5", "tool_call": true, "reasoning": true, "attachment": true, "temperature": true, "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] }, "limit": { "context": 1050000, "output": 128000 } },
-                    "gpt-5.4": { "name": "GPT 5.4", "tool_call": true, "reasoning": true, "attachment": true, "temperature": true, "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] }, "limit": { "context": 1050000, "output": 131072 } },
-                    "gpt-5.4-mini": { "name": "GPT 5.4 mini", "tool_call": true, "reasoning": true, "attachment": true, "temperature": true, "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] }, "limit": { "context": 1050000, "output": 131072 } },
-                    "gpt-5.4-nano": { "name": "GPT 5.4 nano", "tool_call": true, "reasoning": true, "attachment": true, "temperature": true, "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] }, "limit": { "context": 1050000, "output": 131072 } },
-                    "gpt-5.3-codex": { "name": "GPT 5.3 Codex", "tool_call": true, "attachment": true, "temperature": true, "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] }, "limit": { "context": 1000000, "output": 32768 } },
-                    "gpt-4.1": { "name": "GPT 4.1", "tool_call": true, "attachment": true, "temperature": true, "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] }, "limit": { "context": 1000000, "output": 32768 } },
-                    "gpt-4.1-mini": { "name": "GPT 4.1 mini", "tool_call": true, "attachment": true, "temperature": true, "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] }, "limit": { "context": 1000000, "output": 32768 } },
-                    "o4-mini": { "name": "o4-mini (reasoning)", "tool_call": true, "reasoning": true, "temperature": true, "modalities": { "input": ["text"], "output": ["text"] }, "limit": { "context": 200000, "output": 100000 } },
-                    "gemini-3.1-pro-preview": { "name": "Gemini 3.1 Pro", "tool_call": true, "reasoning": true, "attachment": true, "temperature": true, "modalities": { "input": ["text", "image", "pdf", "video", "audio"], "output": ["text"] }, "limit": { "context": 1000000, "output": 65536 } },
-                    "gemini-3-flash-preview": { "name": "Gemini 3 Flash", "tool_call": true, "reasoning": true, "attachment": true, "temperature": true, "modalities": { "input": ["text", "image", "pdf", "video", "audio"], "output": ["text"] }, "limit": { "context": 1000000, "output": 65536 } },
-                    "gemini-3.1-flash-lite-preview": { "name": "Gemini 3.1 Flash-Lite", "tool_call": true, "attachment": true, "temperature": true, "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] }, "limit": { "context": 1000000, "output": 65536 } }
-                }
-            }));
-        }
-
-        // Default model — only on FIRST install. If a model is already
-        // persisted (e.g. the user changed it in Settings), preserve it.
-        // Previously we unconditionally stomped the user's choice on
-        // every run_first_setup() call, which includes repair paths
-        // (repair_gpd_venv, marker-missing re-entry at lib.rs:520-529).
-        // See Task 3.1 / Decision 0.A in docs/CONFIG_ARCHITECTURE.md.
-        if !obj.contains_key("model") {
-            obj.insert("model".to_string(), serde_json::json!("gpd/claude-sonnet-4-6"));
-        }
-
-        // Only show GPD provider
-        obj.insert("enabled_providers".to_string(), serde_json::json!(["gpd"]));
-
-        // Auto-approve all permissions (professors shouldn't see permission prompts)
-        obj.insert("permission".to_string(), serde_json::json!("allow"));
+        // Account credentials and model catalogs belong to the official runtimes.
+        // Keep existing provider credentials/preferences intact. The runtime
+        // allowlist selects the subscription experience without deleting data.
+        obj.insert("enabled_providers".to_string(), serde_json::json!(["codex-subscription", "claude-subscription"]));
+        obj.insert("permission".to_string(), serde_json::json!("ask"));
 
         // Overwrite MCP server entries with the correct venv Python path.
         // `gpd install opencode` may write MCP entries pointing to an older
@@ -740,7 +673,7 @@ fn inject_provider_config(config: &Path) -> Result<(), String> {
     std::fs::write(&path, format!("{json_str}\n"))
         .map_err(|e| format!("Couldn't save GPD's settings. Check disk space and permissions. ({e})"))?;
 
-    tracing::info!(path = %path.display(), "Injected LiteLLM provider config");
+    tracing::info!(path = %path.display(), "Configured local subscription runtimes");
     Ok(())
 }
 
@@ -760,7 +693,7 @@ mod tests {
 
         // Verify top-level structure
         let obj = parsed.as_object().expect("config should be an object");
-        assert!(obj.contains_key("provider"), "missing 'provider' key");
+        assert!(!obj.contains_key("provider"), "model catalogs belong to local runtimes");
         // "model" is deliberately ABSENT — see Task 3.1 / Decision 0.A.
         // OPENCODE_CONFIG_CONTENT is env-tier; if it set "model" it would
         // override the user's saved model on every launch.
@@ -770,22 +703,11 @@ mod tests {
     }
 
     #[test]
-    fn build_config_json_has_all_16_models() {
-        let json = build_config_json();
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        let models = parsed["provider"]["gpd"]["models"].as_object().unwrap();
-        assert_eq!(models.len(), 14, "expected 14 models, got {}", models.len());
-
-        let expected = [
-            "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5",
-            "gpt-5.5",
-            "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano",
-            "gpt-5.3-codex", "gpt-4.1", "gpt-4.1-mini", "o4-mini",
-            "gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview",
-        ];
-        for name in &expected {
-            assert!(models.contains_key(*name), "missing model: {name}");
-        }
+    fn build_config_json_uses_only_subscription_runtimes() {
+        let parsed: serde_json::Value = serde_json::from_str(&build_config_json()).unwrap();
+        assert_eq!(parsed["enabled_providers"], serde_json::json!(["codex-subscription", "claude-subscription"]));
+        assert!(parsed.get("provider").is_none());
+        assert!(parsed.get("model").is_none());
     }
 
     #[test]
@@ -837,31 +759,6 @@ mod tests {
         let python = gpd_python();
         if !python.exists() {
             assert!(!result, "is_venv_valid should be false when Python binary is absent");
-        }
-    }
-
-    #[test]
-    fn build_config_json_provider_name_is_gpd() {
-        let json = build_config_json();
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        let name = parsed["provider"]["gpd"]["name"].as_str().unwrap();
-        assert_eq!(name, "GPD (PSI)");
-        assert!(!json.contains("OpenCode"), "config JSON must not contain 'OpenCode'");
-    }
-
-    #[test]
-    fn build_config_json_model_values_are_valid() {
-        // Verify every model has parseable nested objects (catches format string
-        // escaping bugs like {{"input":...}} which produce invalid JSON)
-        let json = build_config_json();
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        let models = parsed["provider"]["gpd"]["models"].as_object().unwrap();
-        for (name, model) in models {
-            assert!(model["name"].is_string(), "model {name} missing 'name'");
-            assert!(model["limit"].is_object(), "model {name} missing 'limit' object");
-            let limit = model["limit"].as_object().unwrap();
-            assert!(limit["context"].is_number(), "model {name} limit missing 'context'");
-            assert!(limit["output"].is_number(), "model {name} limit missing 'output'");
         }
     }
 

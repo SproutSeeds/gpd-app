@@ -6,6 +6,9 @@ import { List } from "@opencode-ai/ui/list"
 import { ProviderIcon } from "@opencode-ai/ui/provider-icon"
 import { DialogConnectProvider } from "./dialog-connect-provider"
 import { useLanguage } from "@/context/language"
+import { useSubscription } from "@/context/subscription"
+import { SubscriptionConnections } from "./subscription-connections"
+import { IconButton } from "@opencode-ai/ui/icon-button"
 
 // The upstream OpenCode "Custom" BYOE provider entry is intentionally omitted
 // for GPD: every call must route through our LiteLLM proxy for billing
@@ -18,6 +21,22 @@ export const DialogSelectProvider: Component = () => {
   const dialog = useDialog()
   const providers = useProviders()
   const language = useLanguage()
+  const subscription = useSubscription()
+  if (subscription.state.enabled)
+    return (
+      <Dialog title="AI connections" transition>
+        <div class="p-6 relative">
+          <IconButton
+            icon="close"
+            variant="ghost"
+            aria-label="Close connections"
+            onClick={() => dialog.close()}
+            class="absolute top-2 right-2 cursor-pointer"
+          />
+          <SubscriptionConnections />
+        </div>
+      </Dialog>
+    )
 
   return (
     <Dialog title={language.t("command.provider.connect")} transition>

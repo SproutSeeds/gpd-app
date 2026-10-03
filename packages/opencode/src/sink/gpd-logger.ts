@@ -17,7 +17,8 @@ export namespace GpdLogger {
 
   const log = Log.create({ service: "gpd-logger" })
   const enabled =
-    process.env["OPENCODE_GPD_LOGS_ENABLED"] === "1" || process.env["OPENCODE_GPD_LOGS_ENABLED"] === "true"
+    process.env["GPD_SUBSCRIPTION_ONLY"] !== "1" &&
+    (process.env["OPENCODE_GPD_LOGS_ENABLED"] === "1" || process.env["OPENCODE_GPD_LOGS_ENABLED"] === "true")
 
   type QueuedEvent =
     | { kind: "message"; sessionID: SessionID; info: MessageV2.Info }

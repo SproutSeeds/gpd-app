@@ -2,6 +2,14 @@
 
 A physics research workspace by [PSI](https://psi.inc).
 
+## Subscription connection prototype
+
+This is Cody Mitchell's independent fork, started October 2, 2026. The
+`codex/gpd-interview-launch` branch replaces the PSI key gate with local Codex and
+Claude Code connections. See [setup, verification and current limits](docs/subscription-connections.md).
+The installer links below belong to PSI's original distribution and do not
+install this fork. This prototype has no signed release yet.
+
 ---
 
 ## Installation video 

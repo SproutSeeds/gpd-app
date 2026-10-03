@@ -6,6 +6,7 @@ import z from "zod"
 import { Session } from "../../session"
 import { MessageV2 } from "../../session/message-v2"
 import { SessionPrompt } from "../../session/prompt"
+import { isRuntime } from "../../subscription/types"
 import { SessionRunState } from "@/session/run-state"
 import { SessionCompaction } from "../../session/compaction"
 import { SessionRevert } from "../../session/revert"
@@ -275,9 +276,7 @@ export const SessionRoutes = lazy(() =>
             return goal
           }),
         )
-        AppRuntime.runFork(
-          SessionPrompt.Service.use((svc) => svc.continueGoal(sessionID)).pipe(Effect.ignore),
-        )
+        AppRuntime.runFork(SessionPrompt.Service.use((svc) => svc.continueGoal(sessionID)).pipe(Effect.ignore))
         return c.json(created)
       },
     )
@@ -766,6 +765,15 @@ export const SessionRoutes = lazy(() =>
             const compact = yield* SessionCompaction.Service
             const prompt = yield* SessionPrompt.Service
             const agent = yield* Agent.Service
+
+            if (isRuntime(body.providerID)) {
+              yield* prompt.prompt({
+                sessionID,
+                model: { providerID: body.providerID, modelID: body.modelID },
+                parts: [{ type: "text", text: "/compact" }],
+              })
+              return
+            }
 
             yield* revert.cleanup(yield* session.get(sessionID))
             const msgs = yield* session.messages({ sessionID })

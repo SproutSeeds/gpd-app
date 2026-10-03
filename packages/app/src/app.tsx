@@ -47,14 +47,13 @@ import DirectoryLayout from "@/pages/directory-layout"
 import Layout from "@/pages/layout"
 import { ErrorPage } from "./pages/error"
 import { WelcomeScreen } from "./components/welcome-screen"
-import {
-  CURRENT_TOS_VERSION,
-  TOS_ACCEPTED_VERSION_STORAGE_KEY,
-} from "./components/tos-content"
+import { CURRENT_TOS_VERSION, TOS_ACCEPTED_VERSION_STORAGE_KEY } from "./components/tos-content"
 import { TosUpgradeGate } from "./components/tos-upgrade-gate"
 import { usePlatform } from "./context/platform"
 import { shouldBootForSavedKeyValidation, validateGpdKey } from "./lib/gpd-key-validate"
 import { useCheckServerHealth } from "./utils/server-health"
+import { SubscriptionProvider, useSubscription } from "./context/subscription"
+import { SubscriptionWelcome } from "./components/subscription-connections"
 
 const HomeRoute = lazy(() => import("@/pages/home"))
 const loadSession = () => import("@/pages/session")
@@ -287,6 +286,30 @@ function ServerKey(props: ParentProps) {
 }
 
 function SetupGate(props: ParentProps) {
+  const subscription = useSubscription()
+  return (
+    <Show
+      when={subscription.state.enabled !== undefined}
+      fallback={
+        <div class="h-dvh flex flex-col gap-4 items-center justify-center">
+          <Splash class="w-16 h-20" />
+          <p>{subscription.state.error || "Checking your connections…"}</p>
+          <button class="cursor-pointer" onClick={() => void subscription.refresh()}>
+            Retry
+          </button>
+        </div>
+      }
+    >
+      <Show when={subscription.state.enabled} fallback={<PsiSetupGate>{props.children}</PsiSetupGate>}>
+        <Show when={subscription.state.entered} fallback={<SubscriptionWelcome />}>
+          {props.children}
+        </Show>
+      </Show>
+    </Show>
+  )
+}
+
+function PsiSetupGate(props: ParentProps) {
   const globalSDK = useGlobalSDK()
   // WHY the extra hook: we need to know whether the "gpd" provider
   // already has an auth entry in opencode's auth.json. See the
@@ -337,9 +360,7 @@ function SetupGate(props: ParentProps) {
   // const [hasKey, setHasKey] = createSignal(
   //   localStorage.getItem("gpd.key.saved") === "true"
   // )
-  const [hasKey, setHasKey] = createSignal(
-    localStorage.getItem("gpd.key.saved") === "true"
-  )
+  const [hasKey, setHasKey] = createSignal(localStorage.getItem("gpd.key.saved") === "true")
 
   // When globalSync finishes bootstrapping and providers load, check if
   // "gpd" is already authed. This is the "installer set the key"
@@ -415,10 +436,7 @@ function SetupGate(props: ParentProps) {
   async function bootOutInvalidSavedKey(detail?: string) {
     // Do not print the key. The validation detail is proxy-supplied text
     // such as "key revoked" / "no model access", not credential material.
-    console.warn(
-      "[gpd] saved API key failed startup validation; returning to welcome screen.",
-      detail ?? "",
-    )
+    console.warn("[gpd] saved API key failed startup validation; returning to welcome screen.", detail ?? "")
     setReonboardLatched(true)
     localStorage.removeItem("gpd.key.saved")
     setHasKey(false)
@@ -429,9 +447,9 @@ function SetupGate(props: ParentProps) {
         console.error("[gpd] removeGpdKey failed after invalid startup validation:", e)
       }
     }
-    void globalSDK.client.global.dispose().catch((e) =>
-      console.error("[gpd] global.dispose failed after invalid startup validation:", e),
-    )
+    void globalSDK.client.global
+      .dispose()
+      .catch((e) => console.error("[gpd] global.dispose failed after invalid startup validation:", e))
   }
 
   const [tosAcceptedVersion, setTosAcceptedVersion] = createSignal<string | null>(
@@ -604,18 +622,20 @@ export function AppInterface(props: {
         <ServerKey>
           <GlobalSDKProvider>
             <GlobalSyncProvider>
-              <SetupGate>
-                <Dynamic
-                  component={props.router ?? Router}
-                  root={(routerProps) => <RouterRoot appChildren={props.children}>{routerProps.children}</RouterRoot>}
-                >
-                  <Route path="/" component={HomeRoute} />
-                  <Route path="/:dir" component={DirectoryLayout}>
-                    <Route path="/" component={SessionIndexRoute} />
-                    <Route path="/session/:id?" component={SessionRoute} />
-                  </Route>
-                </Dynamic>
-              </SetupGate>
+              <SubscriptionProvider>
+                <SetupGate>
+                  <Dynamic
+                    component={props.router ?? Router}
+                    root={(routerProps) => <RouterRoot appChildren={props.children}>{routerProps.children}</RouterRoot>}
+                  >
+                    <Route path="/" component={HomeRoute} />
+                    <Route path="/:dir" component={DirectoryLayout}>
+                      <Route path="/" component={SessionIndexRoute} />
+                      <Route path="/session/:id?" component={SessionRoute} />
+                    </Route>
+                  </Dynamic>
+                </SetupGate>
+              </SubscriptionProvider>
             </GlobalSyncProvider>
           </GlobalSDKProvider>
         </ServerKey>
