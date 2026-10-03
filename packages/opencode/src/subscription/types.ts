@@ -18,6 +18,7 @@ export type Connection = {
   id: RuntimeID
   name: string
   installed: boolean
+  enabled?: boolean
   authenticated: boolean
   plan?: string
   models: RuntimeModel[]

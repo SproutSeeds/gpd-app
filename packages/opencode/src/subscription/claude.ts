@@ -4,6 +4,7 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { query, type Query, type SDKUserMessage, type Options } from "@anthropic-ai/claude-agent-sdk"
 import { claudeReadiness, subscriptionEnvironment, type Connection, type ResearchInput } from "./types"
+import { subscriptionAccess } from "./access"
 
 function inbox() {
   const messages: SDKUserMessage[] = []
@@ -48,16 +49,36 @@ function options(cwd: string): Options {
   }
 }
 
-const authStatus = async () =>
-  JSON.parse(
-    (
-      await promisify(execFile)(Bun.which("claude")!, ["auth", "status", "--json"], {
-        env: subscriptionEnvironment(),
-        timeout: 15_000,
-      })
-    ).stdout,
-  )
-async function inspect(session: Query, readAuth = authStatus) {
+export async function readClaudeAuthStatus(
+  run: () => Promise<{ stdout: string }> = () =>
+    promisify(execFile)(Bun.which("claude")!, ["auth", "status", "--json"], {
+      env: subscriptionEnvironment(),
+      timeout: 15_000,
+    }),
+) {
+  let stdout: string
+  try {
+    stdout = (await run()).stdout
+  } catch (error) {
+    // Claude exits 1 with valid JSON when signed out. Other failures must not
+    // masquerade as a disconnected account or expose raw command output.
+    const failure = error as { code?: unknown; stdout?: unknown }
+    if (failure.code === 1 && typeof failure.stdout === "string") {
+      try {
+        const value = JSON.parse(failure.stdout)
+        if (value.loggedIn === false) return value
+      } catch {}
+    }
+    throw new Error("Claude Code could not check your sign in. Try Refresh connections.")
+  }
+  try {
+    const value = JSON.parse(stdout)
+    if (typeof value.loggedIn === "boolean") return value
+  } catch {}
+  throw new Error("Claude Code returned an unreadable sign in status. Try Refresh connections.")
+}
+
+async function inspect(session: Query, readAuth = readClaudeAuthStatus) {
   const login = await readAuth()
   const account = await session.accountInfo()
   if (
@@ -89,11 +110,16 @@ async function inspect(session: Query, readAuth = authStatus) {
   }
 }
 
-export async function claudeConnection(): Promise<Connection> {
+export async function claudeConnection(
+  drivers: { auth: typeof readClaudeAuthStatus; query: typeof query; installed?: () => boolean } = {
+    auth: readClaudeAuthStatus,
+    query,
+  },
+): Promise<Connection> {
   const base = {
     id: "claude-subscription" as const,
     name: "Claude Code",
-    installed: !!Bun.which("claude"),
+    installed: drivers.installed?.() ?? !!Bun.which("claude"),
     checkedAt: Date.now(),
   }
   const stream = inbox()
@@ -104,8 +130,14 @@ export async function claudeConnection(): Promise<Connection> {
     session?.close()
   }, 25_000)
   try {
-    session = query({ prompt: stream, options: { ...options(os.tmpdir()), tools: [], abortController: controller } })
-    const data = await inspect(session)
+    if (!base.installed) throw new Error("Install Claude Code to connect your Claude subscription.")
+    const login = await drivers.auth()
+    if (login.loggedIn !== true) throw new Error("Sign in to Claude Code with your Claude subscription.")
+    session = drivers.query({
+      prompt: stream,
+      options: { ...options(os.tmpdir()), tools: [], abortController: controller },
+    })
+    const data = await inspect(session, async () => login)
     return { ...base, authenticated: true, plan: data.account.subscriptionType, models: data.models, usage: data.usage }
   } catch (error) {
     return {
@@ -121,56 +153,69 @@ export async function claudeConnection(): Promise<Connection> {
   }
 }
 
-export async function runClaude(
+export function runClaude(
   input: ResearchInput,
-  drivers: { query: typeof query; auth: typeof authStatus } = { query, auth: authStatus },
+  drivers = { query, auth: readClaudeAuthStatus },
+  access = subscriptionAccess,
+) {
+  return access.run("claude-subscription", input.signal, (signal) => runConnectedClaude({ ...input, signal }, drivers))
+}
+
+async function runConnectedClaude(
+  input: ResearchInput,
+  drivers: { query: typeof query; auth: typeof readClaudeAuthStatus },
 ) {
   const stream = inbox()
   const controller = new AbortController()
-  const abort = () => controller.abort()
+  let session: Query | undefined
+  const abort = () => {
+    controller.abort(input.signal.reason)
+    session?.close()
+  }
   input.signal.addEventListener("abort", abort, { once: true })
-  const session = drivers.query({
-    prompt: stream,
-    options: {
-      ...options(input.cwd),
-      model: input.model,
-      effort: input.effort as Options["effort"],
-      resume: input.nativeID,
-      permissionMode: input.readOnly ? "plan" : "default",
-      persistSession: true,
-      includePartialMessages: true,
-      abortController: controller,
-      mcpServers: input.readOnly
-        ? {}
-        : Object.fromEntries(
-            Object.entries(input.mcp).map(([key, value]) => [key, { type: "stdio" as const, ...value }]),
-          ),
-      systemPrompt: input.instructions
-        ? { type: "preset", preset: "claude_code", append: input.instructions }
-        : { type: "preset", preset: "claude_code" },
-      canUseTool: async (name, toolInput, context) => {
-        if (name === "AskUserQuestion" && Array.isArray(toolInput.questions)) {
-          const questions = toolInput.questions as {
-            header: string
-            question: string
-            options: { label: string; description: string }[]
-          }[]
-          const answers = await input.question(questions)
-          return {
-            behavior: "allow",
-            updatedInput: {
-              ...toolInput,
-              answers: Object.fromEntries(questions.map((q, i) => [q.question, answers[i]?.join(", ") ?? ""])),
-            },
-          }
-        }
-        if (await input.approve(name, toolInput, context.toolUseID))
-          return { behavior: "allow", updatedInput: toolInput }
-        return { behavior: "deny", message: "The user declined this action." }
-      },
-    },
-  })
   try {
+    input.signal.throwIfAborted()
+    session = drivers.query({
+      prompt: stream,
+      options: {
+        ...options(input.cwd),
+        model: input.model,
+        effort: input.effort as Options["effort"],
+        resume: input.nativeID,
+        permissionMode: input.readOnly ? "plan" : "default",
+        persistSession: true,
+        includePartialMessages: true,
+        abortController: controller,
+        mcpServers: input.readOnly
+          ? {}
+          : Object.fromEntries(
+              Object.entries(input.mcp).map(([key, value]) => [key, { type: "stdio" as const, ...value }]),
+            ),
+        systemPrompt: input.instructions
+          ? { type: "preset", preset: "claude_code", append: input.instructions }
+          : { type: "preset", preset: "claude_code" },
+        canUseTool: async (name, toolInput, context) => {
+          if (name === "AskUserQuestion" && Array.isArray(toolInput.questions)) {
+            const questions = toolInput.questions as {
+              header: string
+              question: string
+              options: { label: string; description: string }[]
+            }[]
+            const answers = await input.question(questions)
+            return {
+              behavior: "allow",
+              updatedInput: {
+                ...toolInput,
+                answers: Object.fromEntries(questions.map((q, i) => [q.question, answers[i]?.join(", ") ?? ""])),
+              },
+            }
+          }
+          if (await input.approve(name, toolInput, context.toolUseID))
+            return { behavior: "allow", updatedInput: toolInput }
+          return { behavior: "deny", message: "The user declined this action." }
+        },
+      },
+    })
     const status = await inspect(session, drivers.auth)
     if (!status.usage.ready) throw new Error(status.usage.reason)
     if (!status.models.some((x) => x.id === input.model))
@@ -259,7 +304,7 @@ export async function runClaude(
   } finally {
     stream.close()
     controller.abort()
-    session.close()
+    session?.close()
     input.signal.removeEventListener("abort", abort)
   }
 }

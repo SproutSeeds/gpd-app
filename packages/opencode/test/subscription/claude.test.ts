@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test"
 import type { Query, query } from "@anthropic-ai/claude-agent-sdk"
-import { runClaude } from "../../src/subscription/claude"
+import { runClaude, readClaudeAuthStatus, claudeConnection } from "../../src/subscription/claude"
+import { createSubscriptionAccess } from "../../src/subscription/access"
+import { tmpdir } from "../fixture/fixture"
 import type { ResearchInput, RuntimeEvent } from "../../src/subscription/types"
 
 function fixture(options: { extra?: boolean; unknown?: boolean; api?: boolean; failed?: boolean } = {}) {
@@ -125,4 +127,80 @@ test("Claude refuses resuming another account's native session", async () => {
   f.input.nativeOwner = "different-owner"
   await expect(runClaude(f.input, f.drivers)).rejects.toThrow("different Claude account")
   expect(f.sent()).toBe(0)
+})
+
+test("Claude's exit 1 signed out JSON is a normal connection state and never starts the SDK", async () => {
+  const auth = () =>
+    readClaudeAuthStatus(async () => {
+      throw Object.assign(new Error("Command failed: /private/path/claude auth status --json"), {
+        code: 1,
+        stdout: JSON.stringify({ loggedIn: false, authMethod: "none", apiProvider: "firstParty" }),
+      })
+    })
+  const state = await claudeConnection({
+    auth,
+    installed: () => true,
+    query: (() => {
+      throw new Error("SDK must not start while signed out")
+    }) as typeof query,
+  })
+  expect(state.authenticated).toBe(false)
+  expect(state.usage.reason).toBe("Sign in to Claude Code with your Claude subscription.")
+  expect(await auth()).toMatchObject({ loggedIn: false })
+})
+
+test.each([
+  { code: 2, stdout: '{"loggedIn":false}' },
+  { code: 1, stdout: '{"loggedIn":true}' },
+  { code: 1, stdout: "invalid response" },
+  { code: "ENOENT", stdout: "" },
+])("real auth command failures are actionable without exposing raw command output: %j", async (failure) => {
+  await expect(
+    readClaudeAuthStatus(async () => {
+      throw Object.assign(new Error("raw private command output"), failure)
+    }),
+  ).rejects.toThrow("Claude Code could not check your sign in")
+})
+
+test("malformed successful auth output remains an error", async () => {
+  await expect(readClaudeAuthStatus(async () => ({ stdout: "{}" }))).rejects.toThrow("unreadable sign in status")
+  expect(await readClaudeAuthStatus(async () => ({ stdout: '{"loggedIn":true}' }))).toMatchObject({ loggedIn: true })
+})
+
+test("a disconnected Claude request is rejected before querying the native runtime", async () => {
+  await using tmp = await tmpdir()
+  const access = createSubscriptionAccess(tmp.path)
+  await access.setEnabled("claude-subscription", false)
+  const f = fixture()
+  await expect(runClaude(f.input, f.drivers, access)).rejects.toThrow("disconnected from GPD")
+  expect(f.options()).toBeUndefined()
+  expect(f.sent()).toBe(0)
+})
+
+test("disconnect aborts an active Claude runtime and closes its owned session", async () => {
+  await using tmp = await tmpdir()
+  const access = createSubscriptionAccess(tmp.path)
+  const f = fixture()
+  const entered = Promise.withResolvers<void>()
+  const original = f.drivers.query
+  f.drivers.query = ((args: Parameters<typeof query>[0]) => {
+    const session = original(args)
+    return {
+      ...session,
+      async *[Symbol.asyncIterator]() {
+        entered.resolve()
+        const signal = args.options!.abortController!.signal
+        await new Promise((_, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+        })
+      },
+    } as Query
+  }) as typeof query
+  const pending = runClaude({ ...f.input, signal: new AbortController().signal }, f.drivers, access)
+  void pending.catch(() => {})
+  await entered.promise
+  await access.setEnabled("claude-subscription", false)
+  await expect(pending).rejects.toThrow("disconnected from GPD")
+  expect(f.options()?.abortController?.signal.aborted).toBe(true)
+  expect(f.closed()).toBe(true)
 })

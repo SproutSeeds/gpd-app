@@ -53,79 +53,107 @@ export function SubscriptionConnections(props: { welcome?: boolean }) {
       </Show>
       <div class="grid gap-3 sm:grid-cols-2">
         <For each={subscription.state.connections}>
-          {(connection) => (
-            <section class="rounded-xl border border-border-base p-5 flex flex-col gap-4 bg-background-weak">
-              <div class="flex items-start justify-between gap-2">
-                <div>
-                  <h3 class="text-16-medium text-text-strong">{connection.name}</h3>
-                  <p class="text-12-regular text-text-weak mt-1">
-                    {connection.authenticated
-                      ? "Subscription connected"
-                      : connection.installed
-                        ? "Ready to connect"
-                        : "Install to connect"}
-                  </p>
+          {(connection) => {
+            let connectButton: HTMLButtonElement | undefined
+            return (
+              <section class="rounded-xl border border-border-base p-5 flex flex-col gap-4 bg-background-weak">
+                <div class="flex items-start justify-between gap-2">
+                  <div>
+                    <h3 class="text-16-medium text-text-strong">{connection.name}</h3>
+                    <p class="text-12-regular text-text-weak mt-1">
+                      {connection.enabled === false
+                        ? "Disconnected from GPD"
+                        : connection.authenticated
+                          ? "Subscription connected"
+                          : connection.installed
+                            ? "Ready to connect"
+                            : "Install to connect"}
+                    </p>
+                  </div>
+                  <span class="text-12-medium text-text-strong">
+                    {connection.authenticated ? (connection.usage.ready ? "Ready" : "Usage check needed") : ""}
+                  </span>
                 </div>
-                <span class="text-12-medium text-text-strong">
-                  {connection.authenticated ? (connection.usage.ready ? "Ready" : "Usage check needed") : ""}
-                </span>
-              </div>
-              <p class="text-12-regular text-text-base flex-1" role="status">
-                {connection.usage.reason}
-              </p>
-              <Show when={connection.authenticated}>
-                <p class="text-12-regular text-text-weak">
-                  {connection.models.length} models discovered from your runtime
+                <p class="text-12-regular text-text-base flex-1" role="status">
+                  {connection.usage.reason}
                 </p>
-              </Show>
-              <Show
-                when={connection.installed}
-                fallback={
-                  <Button
-                    class="cursor-pointer"
-                    variant="secondary"
-                    onClick={() => platform.openLink(links[connection.id].install)}
-                  >
-                    Install {connection.name}
-                  </Button>
-                }
-              >
+                <Show when={connection.authenticated}>
+                  <p class="text-12-regular text-text-weak">
+                    {connection.models.length} models discovered from your runtime
+                  </p>
+                </Show>
                 <Show
-                  when={connection.authenticated}
+                  when={connection.installed}
                   fallback={
                     <Button
                       class="cursor-pointer"
-                      variant="primary"
-                      disabled={!!subscription.state.login}
-                      onClick={() => void subscription.connect(connection.id)}
+                      variant="secondary"
+                      onClick={() => platform.openLink(links[connection.id].install)}
                     >
-                      Connect {connection.name}
+                      Install {connection.name}
                     </Button>
                   }
                 >
-                  <Button
-                    class="cursor-pointer"
-                    variant="secondary"
-                    onClick={() => platform.openLink(links[connection.id].usage)}
+                  <Show
+                    when={connection.authenticated}
+                    fallback={
+                      <Button
+                        class="cursor-pointer"
+                        ref={connectButton}
+                        variant="primary"
+                        disabled={!!subscription.state.login || !!subscription.state.disconnecting}
+                        onClick={() => void subscription.connect(connection.id)}
+                      >
+                        {connection.enabled === false ? "Reconnect" : "Connect"} {connection.name}
+                      </Button>
+                    }
                   >
-                    Manage usage
-                  </Button>
+                    <div class="flex flex-wrap gap-2">
+                      <Button
+                        class="cursor-pointer"
+                        variant="secondary"
+                        onClick={() => platform.openLink(links[connection.id].usage)}
+                      >
+                        Manage usage
+                      </Button>
+                      <Button
+                        class="cursor-pointer"
+                        variant="ghost"
+                        disabled={!!subscription.state.disconnecting || !!subscription.state.login}
+                        onClick={async () => {
+                          await subscription.disconnect(connection.id)
+                          connectButton?.focus()
+                        }}
+                      >
+                        {subscription.state.disconnecting === connection.id ? "Disconnecting…" : "Disconnect from GPD"}
+                      </Button>
+                    </div>
+                  </Show>
                 </Show>
-              </Show>
-            </section>
-          )}
+              </section>
+            )
+          }}
         </For>
       </div>
+      <Show when={subscription.state.connections.some((connection) => connection.authenticated)}>
+        <p class="text-12-regular text-text-weak">
+          Disconnecting keeps your conversations and leaves other apps signed in.
+        </p>
+      </Show>
       <Show when={subscription.state.login}>
         <div class="rounded-lg border border-border-base p-4 flex flex-col gap-3" role="status">
           <p class="text-14-medium">
             {subscription.state.loginState?.status === "failed"
               ? "Sign in needs attention"
-              : "Finish signing in with your provider"}
+              : subscription.state.loginState?.url
+                ? "Finish signing in with your provider"
+                : "Checking your existing sign in"}
           </p>
           <p class="text-12-regular text-text-weak">
             {subscription.state.loginState?.message ??
-              "Your provider opens its own sign in page. GPD does not receive your password."}
+              (subscription.state.loginState?.url
+                ? "Your provider opens its own sign in page. GPD does not receive your password."
+                : "GPD will reuse your connected account or open your provider's sign in page.")}
           </p>
           <div class="flex gap-2">
             <Show when={subscription.state.loginState?.url}>
