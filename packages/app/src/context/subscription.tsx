@@ -14,7 +14,7 @@ export type Connection = {
   authenticated: boolean
   plan?: string
   models: { id: string; name: string; efforts: string[] }[]
-  usage: { ready: boolean; reason: string }
+  usage: { ready: boolean; reason: string; windows?: { label: string; usedPercent: number; resetsAt?: number }[] }
   checkedAt: number
 }
 type Login = { status: "pending" | "complete" | "failed" | "idle"; url?: string; message?: string }

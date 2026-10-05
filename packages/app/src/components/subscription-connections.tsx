@@ -71,12 +71,50 @@ export function SubscriptionConnections(props: { welcome?: boolean }) {
                     </p>
                   </div>
                   <span class="text-12-medium text-text-strong">
-                    {connection.authenticated ? (connection.usage.ready ? "Ready" : "Usage check needed") : ""}
+                    {connection.authenticated ? (connection.usage.ready ? "Ready" : "Paused") : ""}
                   </span>
                 </div>
                 <p class="text-12-regular text-text-base flex-1" role="status">
                   {connection.usage.reason}
                 </p>
+                <Show when={connection.usage.windows?.length}>
+                  <div class="flex flex-col gap-3">
+                    <For each={connection.usage.windows}>
+                      {(window) => (
+                        <div class="flex flex-col gap-1">
+                          <div class="flex justify-between gap-2 text-12-regular text-text-base">
+                            <span>{window.label}</span>
+                            <span>{Math.max(0, Math.floor(100 - window.usedPercent))}% left</span>
+                          </div>
+                          <div
+                            role="meter"
+                            aria-label={`${connection.name} ${window.label} allowance remaining`}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-valuenow={100 - window.usedPercent}
+                            class="h-1.5 overflow-hidden rounded-full bg-background-base"
+                          >
+                            <div
+                              class="h-full bg-text-weak rounded-full"
+                              style={{ width: `${100 - window.usedPercent}%` }}
+                            />
+                          </div>
+                          <Show when={window.resetsAt}>
+                            <span class="text-12-regular text-text-weak">
+                              Resets{" "}
+                              {new Date(window.resetsAt!).toLocaleString(undefined, {
+                                month: "short",
+                                day: "numeric",
+                                hour: "numeric",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                          </Show>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
                 <Show when={connection.authenticated}>
                   <p class="text-12-regular text-text-weak">
                     {connection.models.length} models discovered from your runtime
@@ -170,8 +208,8 @@ export function SubscriptionConnections(props: { welcome?: boolean }) {
         </div>
       </Show>
       <p class="text-12-regular text-text-weak">
-        Research uses included subscription allowances. GPD checks usage before each turn and stops when paid overflow
-        is available or usage cannot be verified.
+        Choose a ready connection to start research. GPD checks included usage before each turn. A paused connection
+        does not prevent you from using another ready connection.
       </p>
       <div class="flex gap-3 flex-wrap items-center">
         <Show when={props.welcome}>

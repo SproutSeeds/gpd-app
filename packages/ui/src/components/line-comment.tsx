@@ -112,6 +112,7 @@ export const LineCommentAnchor = (props: LineCommentAnchorProps) => {
         <div
           data-slot="line-comment-popover"
           data-inline-body=""
+          data-clickable={props.onClick ? "true" : undefined}
           classList={{
             [props.popoverClass ?? ""]: !!props.popoverClass,
           }}

@@ -104,7 +104,7 @@ function JsonNode(props: { name?: string; value: Json; depth?: number }) {
 
   return (
     <details open={depth() < 2} class="py-0.5">
-      <summary class="cursor-default font-mono text-12-regular text-text-weak">
+      <summary class="font-mono text-12-regular text-text-weak">
         <Show when={props.name}>
           <span>{props.name}: </span>
         </Show>

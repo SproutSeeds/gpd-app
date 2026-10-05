@@ -784,7 +784,7 @@ export function MessageTimeline(props: {
                           fallback={
                             <h1
                               data-slot="session-title-child"
-                              class="text-14-medium text-text-strong truncate grow-1 min-w-0"
+                              class="text-14-medium text-text-strong truncate grow-1 min-w-0 cursor-pointer"
                               onDblClick={openTitleEditor}
                             >
                               {childTitle()}

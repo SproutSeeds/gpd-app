@@ -16,7 +16,12 @@ const cache = new Map<string, { tab: number; answers: QuestionAnswer[]; custom: 
 
 function Mark(props: { multi: boolean; picked: boolean; onClick?: (event: MouseEvent) => void }) {
   return (
-    <span data-slot="question-option-check" aria-hidden="true" onClick={props.onClick}>
+    <span
+      data-slot="question-option-check"
+      data-clickable={props.onClick ? "true" : undefined}
+      aria-hidden="true"
+      onClick={props.onClick}
+    >
       <span data-slot="question-option-box" data-type={props.multi ? "checkbox" : "radio"} data-picked={props.picked}>
         <Show when={props.multi} fallback={<span data-slot="question-option-radio-dot" />}>
           <Icon name="check-small" size="small" />

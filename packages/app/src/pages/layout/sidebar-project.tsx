@@ -109,7 +109,7 @@ const ProjectTile = (props: {
         data-project={base64Encode(props.project.worktree)}
         title={isLocked() ? props.language.t("sidebar.project.locked.tooltip") : undefined}
         classList={{
-          "rounded-lg overflow-hidden transition-colors cursor-default": true,
+          "rounded-lg overflow-hidden transition-colors": true,
           // Narrow (icon-only) tile: 40px square, centered icon.
           "flex items-center justify-center size-10 p-1": !props.railWide?.(),
           // Wide row: full-width, icon left + name right, comfortable

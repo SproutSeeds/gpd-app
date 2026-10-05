@@ -10,7 +10,7 @@ This independent GPD fork connects the research workspace to local Codex and Cla
 4. Review tool approvals in the conversation. Stop cancels the owned turn. Conversations and native session identifiers are saved locally for resume.
 5. Reopen AI connections from the sidebar or Settings to refresh accounts, models and usage readiness. Exploring the workspace does not require a PSI key or an active connection.
 
-The current Mac artifact is a local development bundle, not a signed downloadable release. The repository's original installer links still install PSI's distribution.
+The current Mac artifact is a signed local development bundle. Notarized distribution remains pending. The repository's original installer links still install PSI's distribution.
 
 ## Build
 
@@ -41,6 +41,16 @@ The Apple Silicon bundle is `packages/desktop/src-tauri/target/debug/bundle/maco
 Authentication and model visibility are separate from billing readiness. Codex must affirm ordinary usage and report no paid credits or unlimited credit access. Claude must return usable plan limits and explicitly disabled extra usage. Unknown metadata, API authentication, enabled paid overflow and exhausted allowances stop inference. Fast or paid service tiers are not selected. There is no API fallback or automatic credit purchase.
 
 Provider metadata is experimental and can change. GPD deliberately stops when it cannot verify this policy. Runtime and provider account settings remain owned by the user. A provider catalog is an available selection, not a promise of unlimited usage.
+
+Connection cards show each reported allowance window, the percentage remaining and its reset time when supplied by the provider. A paused connection stays visible with its reason. The model picker offers ready connections independently, so a paused Codex connection does not prevent research through Claude.
+
+## Usage fix on October 5, 2026
+
+The previous environment set `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, which also suppresses the Claude SDK usage lookup. The adapter now disables telemetry, error reporting and automatic updates individually. Live usage reports return successfully while extra usage remains disabled. Both the current `limits` projection and the older named usage windows are supported.
+
+Live Claude verification completed a kinetic energy question with the correct 9 J result and resumed the same session to recall the 2 kg mass. The connected account reported 80 percent of its weekly allowance remaining at verification. Allowance percentages are current account readings, not fixed token quotas.
+
+The connected Codex account reported included allowance and available paid credits. It remains paused because the official runtime did not provide a verified per turn control that disables credit fallback. The card explains this separately from exhausted or unknown usage. No provider billing settings were changed.
 
 ## Verification on October 2, 2026
 

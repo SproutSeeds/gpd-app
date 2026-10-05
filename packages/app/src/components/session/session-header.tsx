@@ -290,7 +290,7 @@ export function SessionHeader() {
                 type="button"
                 variant="ghost"
                 size="small"
-                class="flex w-full min-w-0 items-center gap-2 justify-between rounded-md border border-border-weak-base bg-surface-panel shadow-none cursor-default"
+                class="flex w-full min-w-0 items-center gap-2 justify-between rounded-md border border-border-weak-base bg-surface-panel shadow-none"
                 onClick={() => command.trigger("file.open")}
                 aria-label={language.t("session.header.searchFiles")}
               >

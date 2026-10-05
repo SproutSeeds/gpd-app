@@ -32,7 +32,7 @@ export const lineCommentStyles = `
   justify-content: center;
   background: var(--icon-interactive-base);
   box-shadow: var(--shadow-xs);
-  cursor: default;
+  cursor: pointer;
   border: none;
 }
 
