@@ -43,6 +43,8 @@ describe("subscription spending policy", () => {
       { credits: null },
       { credits: {} },
       { primary: { usedPercent: 100 } },
+      { primary: { usedPercent: -1 } },
+      { primary: null, secondary: null },
       { secondary: { usedPercent: NaN } },
       { spendControlReached: true },
       { rateLimitReachedType: "credits" },
@@ -61,6 +63,7 @@ describe("subscription spending policy", () => {
       { limits: [{ percent: 100 }] },
       { limits: [{ percent: "20" }] },
       { limits: null },
+      { limits: [null] },
     ])
       expect(claudeReadiness({ ...claude(), rate_limits: { ...claude().rate_limits, ...change } }).ready).toBe(false)
     expect(claudeReadiness({ ...claude(), rate_limits_available: false }).ready).toBe(false)
@@ -85,5 +88,64 @@ describe("subscription spending policy", () => {
     for (const name of Object.keys(input).filter((k) => !["HOME", "PATH", "CODEX_HOME"].includes(k)))
       expect(env[name]).toBeUndefined()
     expect(input.OPENAI_API_KEY).toBe("sentinel")
+    // Disabling all nonessential traffic breaks the official SDK's usage read.
+    // Specific controls keep telemetry, error reporting and updates disabled.
+    expect(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBeUndefined()
+    expect(env.DISABLE_TELEMETRY).toBe("1")
+    expect(env.DISABLE_ERROR_REPORTING).toBe("1")
+    expect(env.DISABLE_AUTOUPDATER).toBe("1")
+  })
+  test("reports remaining allowance even when paid Codex credits keep research paused", () => {
+    const value = codex()
+    value.rateLimits.credits.hasCredits = true
+    const result = codexReadiness(value)
+    expect(result.ready).toBe(false)
+    expect(result.windows).toEqual([
+      { label: "Primary", usedPercent: 25 },
+      { label: "Secondary", usedPercent: 40 },
+    ])
+    expect(result.reason).toContain("paid credits")
+  })
+  test("shows runtime window durations and reset times without inventing missing resets", () => {
+    const result = codexReadiness({
+      ...codex(),
+      rateLimits: {
+        ...codex().rateLimits,
+        primary: { usedPercent: 16, windowDurationMins: 10080, resetsAt: 1800000000 },
+        secondary: null,
+      },
+    })
+    expect(result.windows).toEqual([{ label: "Weekly", usedPercent: 16, resetsAt: 1800000000000 }])
+    const resultClaude = claudeReadiness({
+      rate_limits_available: true,
+      rate_limits: {
+        five_hour: { utilization: 0, resets_at: null },
+        seven_day: { utilization: 20, resets_at: "2026-10-10T05:00:00Z" },
+        extra_usage: { is_enabled: false },
+        limits: [
+          { kind: "session", percent: 0, resets_at: null },
+          { kind: "weekly_all", percent: 20, resets_at: "2026-10-10T05:00:00Z" },
+          { kind: "weekly_scoped", percent: 5, scope: { model: { display_name: "Model A" } } },
+        ],
+      },
+    })
+    expect(resultClaude.ready).toBe(true)
+    expect(resultClaude.windows).toEqual([
+      { label: "5 hour", usedPercent: 0 },
+      { label: "Weekly", usedPercent: 20, resetsAt: Date.parse("2026-10-10T05:00:00Z") },
+      { label: "Model A", usedPercent: 5 },
+    ])
+  })
+  test("legacy Claude OAuth app allowance exhaustion cannot be hidden by a healthy weekly allowance", () => {
+    const result = claudeReadiness({
+      rate_limits_available: true,
+      rate_limits: {
+        seven_day: { utilization: 20 },
+        seven_day_oauth_apps: { utilization: 100 },
+        extra_usage: { is_enabled: false },
+      },
+    })
+    expect(result.ready).toBe(false)
+    expect(result.windows).toHaveLength(2)
   })
 })

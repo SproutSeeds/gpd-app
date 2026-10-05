@@ -13,7 +13,8 @@ export type RuntimeModel = {
   default?: boolean
   image?: boolean
 }
-export type Readiness = { ready: boolean; reason: string }
+export type UsageWindow = { label: string; usedPercent: number; resetsAt?: number }
+export type Readiness = { ready: boolean; reason: string; windows?: UsageWindow[] }
 export type Connection = {
   id: RuntimeID
   name: string
@@ -79,60 +80,114 @@ export function subscriptionEnvironment(source: NodeJS.ProcessEnv = process.env)
   }
   delete env.CLAUDECODE
   delete env.CLAUDE_CODE_ENTRYPOINT
-  env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+  // The broad nonessential-traffic switch also disables the SDK's plan usage
+  // lookup. Disable telemetry and updates individually so that read can work.
   env.DISABLE_TELEMETRY = "1"
+  env.DISABLE_ERROR_REPORTING = "1"
+  env.DISABLE_AUTOUPDATER = "1"
   return env
+}
+
+function usageWindow(label: unknown, percent: unknown, reset: unknown): UsageWindow[] {
+  if (typeof percent !== "number" || !Number.isFinite(percent) || percent < 0 || percent > 100) return []
+  const time = typeof reset === "number" ? reset * 1000 : typeof reset === "string" ? Date.parse(reset) : NaN
+  return [
+    {
+      label: typeof label === "string" ? label : "Included usage",
+      usedPercent: percent,
+      ...(Number.isFinite(time) && time > 0 ? { resetsAt: time } : {}),
+    },
+  ]
+}
+
+function codexWindowLabel(minutes: unknown, fallback: string) {
+  if (minutes === 10080) return "Weekly"
+  if (minutes === 300) return "5 hour"
+  if (minutes === 1440) return "Daily"
+  return fallback
 }
 
 // Usage metadata is an external protocol. Deliberately accept only known,
 // affirmative evidence; missing fields are not proof that spending is disabled.
 export function codexReadiness(value: any): Readiness {
   const quota = value?.rateLimitsByLimitId?.codex ?? value?.rateLimits
+  const windows = [
+    ...usageWindow(
+      codexWindowLabel(quota?.primary?.windowDurationMins, "Primary"),
+      quota?.primary?.usedPercent,
+      quota?.primary?.resetsAt,
+    ),
+    ...usageWindow(
+      codexWindowLabel(quota?.secondary?.windowDurationMins, "Secondary"),
+      quota?.secondary?.usedPercent,
+      quota?.secondary?.resetsAt,
+    ),
+  ]
+  const result = (ready: boolean, reason: string): Readiness => ({ ready, reason, windows })
   if (!quota || quota.limitId !== "codex" || value.ordinaryUsageAllowed !== true)
-    return {
-      ready: false,
-      reason: "Included Codex usage is unavailable or could not be verified. Refresh usage in Codex.",
-    }
-  if (quota.credits?.hasCredits !== false || quota.credits?.unlimited !== false)
-    return {
-      ready: false,
-      reason:
-        "Codex paid credit access must be unavailable before research can run. Check your Codex usage settings, then refresh.",
-    }
+    return result(false, "Included Codex usage is unavailable or could not be verified. Refresh usage in Codex.")
   if (
     quota.spendControlReached === true ||
     quota.rateLimitReachedType ||
-    [quota.primary, quota.secondary].some((x) => x && (!Number.isFinite(x.usedPercent) || x.usedPercent >= 100))
+    !windows.length ||
+    [quota.primary, quota.secondary].some(
+      (x) => x && (!Number.isFinite(x.usedPercent) || x.usedPercent < 0 || x.usedPercent >= 100),
+    )
   )
-    return { ready: false, reason: "Codex has reached a usage limit. Wait for the allowance to reset." }
-  return { ready: true, reason: "Included Codex usage available. No paid credits available." }
+    return result(false, "Included Codex usage is exhausted or unavailable. Refresh after the allowance resets.")
+  if (quota.credits?.hasCredits === true || quota.credits?.unlimited === true)
+    return result(
+      false,
+      "Included usage remains, but paid credits are also available. GPD keeps this connection paused to avoid credit spending. You can use another ready connection.",
+    )
+  if (quota.credits?.hasCredits !== false || quota.credits?.unlimited !== false)
+    return result(
+      false,
+      "Codex has not confirmed that paid credits are unavailable. Refresh the connection or check Manage usage.",
+    )
+  return result(true, "Included Codex usage available. No paid credits available.")
 }
 
 export function claudeReadiness(value: any): Readiness {
   const quota = value?.rate_limits
+  const labels: Record<string, string> = { session: "5 hour", weekly_all: "Weekly", weekly_scoped: "Model weekly" }
+  const windows = Array.isArray(quota?.limits)
+    ? quota.limits.flatMap((x: any) =>
+        usageWindow(x?.scope?.model?.display_name ?? labels[x?.kind] ?? "Included usage", x?.percent, x?.resets_at),
+      )
+    : [
+        ["5 hour", quota?.five_hour],
+        ["Weekly", quota?.seven_day],
+        ["OAuth apps weekly", quota?.seven_day_oauth_apps],
+        ["Opus weekly", quota?.seven_day_opus],
+        ["Sonnet weekly", quota?.seven_day_sonnet],
+      ].flatMap(([label, x]) => usageWindow(label, x?.utilization, x?.resets_at))
+  const result = (ready: boolean, reason: string): Readiness => ({ ready, reason, windows })
   const limits = Array.isArray(quota?.limits)
-    ? quota.limits.map((x: any) => x.percent)
+    ? quota.limits.map((x: any) => x?.percent)
     : quota?.limits === undefined
-      ? [quota?.five_hour, quota?.seven_day, quota?.seven_day_opus, quota?.seven_day_sonnet]
+      ? [
+          quota?.five_hour,
+          quota?.seven_day,
+          quota?.seven_day_oauth_apps,
+          quota?.seven_day_opus,
+          quota?.seven_day_sonnet,
+        ]
           .filter(Boolean)
           .map((x) => x.utilization)
       : []
   if (value?.rate_limits_available !== true || !quota || !limits.length)
-    return {
-      ready: false,
-      reason: "Claude included usage could not be verified. Check usage in Claude Code, then refresh the connection.",
-    }
+    return result(false, "Claude usage could not be loaded. Refresh the connection to retry, or check Manage usage.")
   if (quota.extra_usage?.is_enabled !== false)
-    return {
-      ready: false,
-      reason:
-        "Turn off extra usage in Claude account settings, then refresh. GPD requires verified included usage only.",
-    }
+    return result(
+      false,
+      "Turn off extra usage in Claude account settings, then refresh. GPD requires verified included usage only.",
+    )
   if (
     limits.some(
       (percent: unknown) => typeof percent !== "number" || !Number.isFinite(percent) || percent >= 100 || percent < 0,
     )
   )
-    return { ready: false, reason: "Claude has reached a subscription limit. Wait for the allowance to reset." }
-  return { ready: true, reason: "Included Claude usage available. Extra usage is disabled." }
+    return result(false, "Claude has reached a subscription limit. Wait for the allowance to reset.")
+  return result(true, "Included Claude usage available. Extra usage is disabled.")
 }

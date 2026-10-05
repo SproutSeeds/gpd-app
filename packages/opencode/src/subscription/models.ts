@@ -1,11 +1,22 @@
 import { connections } from "./connections"
 import { ProviderID, ModelID } from "../provider/schema"
 import type { Provider } from "../provider/provider"
+import type { Connection } from "./types"
 
 export async function subscriptionProviders(): Promise<Record<ProviderID, Provider.Info>> {
+  return subscriptionProviderCatalog(await connections())
+}
+
+export function subscriptionProviderCatalog(available: Connection[]): Record<ProviderID, Provider.Info> {
   const result: Record<string, Provider.Info> = {}
-  for (const connection of await connections()) {
-    if (!connection.authenticated || !connection.models.length) continue
+  for (const connection of available) {
+    if (
+      connection.enabled === false ||
+      !connection.authenticated ||
+      !connection.usage.ready ||
+      !connection.models.length
+    )
+      continue
     const id = ProviderID.make(connection.id)
     result[id] = {
       id,
