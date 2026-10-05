@@ -74,6 +74,7 @@ export function createInlineEditorController() {
         fallback={
           <span
             class={props.displayClass ?? props.class}
+            data-clickable={allowDblClick() ? "true" : undefined}
             onDblClick={handleDblClick}
             onPointerDown={stopPropagation}
             onMouseDown={stopPropagation}

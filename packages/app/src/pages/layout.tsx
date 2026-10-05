@@ -2644,7 +2644,7 @@ export default function Layout(props: ParentProps) {
             <div class="xl:hidden">
               <div
                 classList={{
-                  "fixed inset-x-0 top-10 bottom-0 z-40 transition-opacity duration-200": true,
+                  "fixed inset-x-0 top-10 bottom-0 z-40 transition-opacity duration-200 cursor-pointer": true,
                   "opacity-100 pointer-events-auto": layout.mobileSidebar.opened(),
                   "opacity-0 pointer-events-none": !layout.mobileSidebar.opened(),
                 }}

@@ -115,7 +115,7 @@ export function SessionTodoDock(props: {
           }}
         >
           <span
-            class="text-14-regular text-text-strong cursor-default inline-flex items-baseline shrink-0 overflow-visible"
+            class="text-14-regular text-text-strong inline-flex items-baseline shrink-0 overflow-visible"
             aria-label={label()}
             style={{
               "--tool-motion-odometer-ms": "600ms",
@@ -147,7 +147,7 @@ export function SessionTodoDock(props: {
             }}
           >
             <TextReveal
-              class="text-14-regular text-text-base cursor-default"
+              class="text-14-regular text-text-base"
               text={store.collapsed ? preview() : undefined}
               duration={600}
               travel={25}
